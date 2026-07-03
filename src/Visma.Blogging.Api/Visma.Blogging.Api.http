@@ -1,0 +1,43 @@
+@Visma.Blogging.Api_HostAddress = http://localhost:5163
+
+POST {{Visma.Blogging.Api_HostAddress}}/post
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "First post",
+  "description": "A short technical note",
+  "content": "The body of the post.",
+  "author": {
+    "name": "Ada",
+    "surname": "Lovelace"
+  }
+}
+
+###
+
+GET {{Visma.Blogging.Api_HostAddress}}/post/00000000-0000-0000-0000-000000000001?includeAuthor=true
+Accept: application/json
+
+###
+
+POST {{Visma.Blogging.Api_HostAddress}}/post
+Content-Type: application/xml
+Accept: application/xml
+
+<CreatePostRequest>
+  <Title>XML post</Title>
+  <Description>A short technical note</Description>
+  <Content>The body of the post.</Content>
+  <Author>
+    <Name>Ada</Name>
+    <Surname>Lovelace</Surname>
+  </Author>
+</CreatePostRequest>
+
+###
+
+GET {{Visma.Blogging.Api_HostAddress}}/post/00000000-0000-0000-0000-000000000001?includeAuthor=true
+Accept: application/xml
+
+###

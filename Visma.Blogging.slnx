@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Visma.Blogging.Api/Visma.Blogging.Api.csproj" />
+    <Project Path="src/Visma.Blogging.Application/Visma.Blogging.Application.csproj" />
+    <Project Path="src/Visma.Blogging.Domain/Visma.Blogging.Domain.csproj" />
+    <Project Path="src/Visma.Blogging.Infrastructure/Visma.Blogging.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Visma.Blogging.IntegrationTests/Visma.Blogging.IntegrationTests.csproj" />
+    <Project Path="tests/Visma.Blogging.UnitTests/Visma.Blogging.UnitTests.csproj" />
+  </Folder>
+</Solution>

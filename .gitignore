@@ -1,0 +1,9 @@
+bin/
+obj/
+TestResults/
+coverage/
+*.user
+*.suo
+.vs/
+.idea/
+.vscode/

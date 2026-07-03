@@ -1,0 +1,71 @@
+services:
+  mongodb:
+    image: mongo:8.0
+    container_name: visma-blogging-mongodb
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }\" | grep 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: visma-blogging-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: visma-blogging:local
+    container_name: visma-blogging-local
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Mongo__ConnectionString: mongodb://mongodb:27017/?directConnection=true
+      Mongo__DatabaseName: visma_blogging
+      Mongo__PostsCollectionName: posts
+      Mongo__LogsCollectionName: logs
+      Mongo__IdempotencyCollectionName: idempotency
+      Mongo__OutboxCollectionName: outbox
+      Mongo__RetryMaxAttempts: 3
+      Mongo__RetryBaseDelayMilliseconds: 100
+      RabbitMq__Enabled: true
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__Port: 5672
+      RabbitMq__VirtualHost: /
+      RabbitMq__UserName: guest
+      RabbitMq__Password: guest
+      RabbitMq__ExchangeName: visma.blogging
+      RabbitMq__PostCreatedQueueName: visma.blogging.post-created
+      RabbitMq__PostCreatedRoutingKey: post.created
+      RabbitMq__DeadLetterExchangeName: visma.blogging.dlx
+      RabbitMq__PublisherBatchSize: 25
+      RabbitMq__PublisherPollingIntervalMilliseconds: 1000
+      RabbitMq__OutboxLockSeconds: 30
+    ports:
+      - "8080:8080"
+
+volumes:
+  mongodb-data:
+  rabbitmq-data:
