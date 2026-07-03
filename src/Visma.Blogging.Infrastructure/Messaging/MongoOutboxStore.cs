@@ -7,7 +7,7 @@ namespace Visma.Blogging.Infrastructure.Messaging;
 /// <summary>
 /// MongoDB-backed outbox used to persist messages before RabbitMQ publication.
 /// </summary>
-public sealed class MongoOutboxStore : IOutboxWriter, IOutboxReader
+public sealed class MongoOutboxStore : IOutboxReader
 {
     private readonly IMongoCollection<MongoOutboxDocument> _outbox;
     private readonly MongoRetryPolicy _retryPolicy;

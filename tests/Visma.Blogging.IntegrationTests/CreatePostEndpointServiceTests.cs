@@ -7,11 +7,18 @@ using Visma.Blogging.Domain;
 
 namespace Visma.Blogging.IntegrationTests;
 
+/// <summary>
+/// Tests the API workflow service below the controller.
+/// The service owns API-specific idempotency orchestration, so these tests keep that
+/// behavior focused without sending real HTTP requests for every edge case.
+/// </summary>
 public sealed class CreatePostEndpointServiceTests
 {
     [Fact]
     public async Task CreateAsync_without_idempotency_key_creates_post()
     {
+        // Without an idempotency key, the service behaves like a normal POST:
+        // execute the create command and return a Created endpoint result.
         var service = CreateService(new MemoryIdempotencyStore());
 
         var result = await service.CreateAsync(ValidRequest(), idempotencyKey: null, CancellationToken.None);
@@ -23,6 +30,8 @@ public sealed class CreatePostEndpointServiceTests
     [Fact]
     public async Task CreateAsync_with_same_idempotency_key_replays_response()
     {
+        // The first call stores the response for the key. The second call should not
+        // execute a new create operation; it should replay the stored response.
         var service = CreateService(new MemoryIdempotencyStore());
         var request = ValidRequest();
         var key = Guid.NewGuid().ToString("N");
@@ -38,6 +47,8 @@ public sealed class CreatePostEndpointServiceTests
     [Fact]
     public async Task CreateAsync_with_same_key_and_different_body_returns_conflict_result()
     {
+        // The service hashes the request body. If a key is reused with a different hash,
+        // the correct API-level outcome is conflict.
         var service = CreateService(new MemoryIdempotencyStore());
         var key = Guid.NewGuid().ToString("N");
 
@@ -50,6 +61,8 @@ public sealed class CreatePostEndpointServiceTests
 
     private static CreatePostEndpointService CreateService(ICreatePostIdempotencyStore idempotencyStore)
     {
+        // This builds only the slice of the application needed by the endpoint service.
+        // It keeps the test fast while still exercising the real create-post handler.
         return new CreatePostEndpointService(
             new CreatePostCommandHandler(
                 new CreatePostCommandValidator(),
@@ -77,6 +90,8 @@ public sealed class CreatePostEndpointServiceTests
 
     private sealed class MemoryIdempotencyStore : ICreatePostIdempotencyStore
     {
+        // A small in-memory idempotency implementation makes the service tests deterministic.
+        // MongoDB idempotency persistence is tested separately in InfrastructureTests.
         private readonly Dictionary<string, Entry> _entries = [];
 
         public Task<CreatePostIdempotencyStartResult> TryStartAsync(
@@ -126,6 +141,8 @@ public sealed class CreatePostEndpointServiceTests
 
     private sealed class CapturingStore : IPostCreationStore
     {
+        // The endpoint service tests are not about MongoDB transactions, so this fake
+        // accepts the atomic save call and lets the handler complete successfully.
         public Task SaveAsync(Post post, Author author, OutboxMessage outboxMessage, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
@@ -134,6 +151,7 @@ public sealed class CreatePostEndpointServiceTests
 
     private sealed class SequentialIdGenerator : IIdGenerator
     {
+        // Predictable IDs make replay assertions straightforward.
         private int _value;
 
         public Guid NewId()
@@ -145,6 +163,7 @@ public sealed class CreatePostEndpointServiceTests
 
     private sealed class FixedClock : IClock
     {
+        // Predictable time keeps event payloads stable.
         public DateTimeOffset UtcNow { get; } = new(2026, 7, 1, 12, 0, 0, TimeSpan.Zero);
     }
 }

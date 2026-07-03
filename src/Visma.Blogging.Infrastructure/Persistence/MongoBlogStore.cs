@@ -11,7 +11,7 @@ namespace Visma.Blogging.Infrastructure.Persistence;
 /// <summary>
 /// MongoDB-backed blog store that persists one durable document per post.
 /// </summary>
-public sealed class MongoBlogStore : IPostCommandStore, IPostCreationStore, IPostQueryStore
+public sealed class MongoBlogStore : IPostCreationStore, IPostQueryStore
 {
     private readonly IMongoClient _client;
     private readonly IMongoCollection<MongoOutboxDocument> _outbox;
@@ -31,26 +31,6 @@ public sealed class MongoBlogStore : IPostCommandStore, IPostCreationStore, IPos
         var database = client.GetDatabase(options.DatabaseName);
         _posts = database.GetCollection<PostDocument>(options.PostsCollectionName);
         _outbox = database.GetCollection<MongoOutboxDocument>(options.OutboxCollectionName);
-    }
-
-    /// <inheritdoc />
-    public async Task SaveAsync(Post post, Author author, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var document = PostDocument.From(post, author);
-
-        try
-        {
-            await _retryPolicy.ExecuteAsync(
-                    token => _posts.InsertOneAsync(document, cancellationToken: token),
-                    cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (MongoWriteException exception) when (exception.WriteError.Category == ServerErrorCategory.DuplicateKey)
-        {
-            throw new InvalidOperationException($"Post '{post.Id}' already exists.", exception);
-        }
     }
 
     /// <inheritdoc />

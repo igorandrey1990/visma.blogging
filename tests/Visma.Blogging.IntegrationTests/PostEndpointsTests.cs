@@ -10,6 +10,11 @@ using Visma.Blogging.Application.Blogging;
 
 namespace Visma.Blogging.IntegrationTests;
 
+/// <summary>
+/// End-to-end HTTP tests for the API surface.
+/// These tests use WebApplicationFactory so requests go through ASP.NET Core routing,
+/// model binding, formatters, controllers, dependency injection, and middleware.
+/// </summary>
 public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly WebApplicationFactory<Program> _factory;
@@ -22,6 +27,9 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task Post_creates_post_and_get_returns_without_author_by_default()
     {
+        // This proves the two required challenge endpoints work together:
+        // POST creates a post and GET can retrieve it. The default GET intentionally
+        // omits author details to keep the read response small unless requested.
         using var client = _factory.CreateClient();
 
         var create = await client.PostAsJsonAsync("/post", ValidRequest());
@@ -42,6 +50,8 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task Get_returns_author_when_requested()
     {
+        // includeAuthor=true is a query-side option. The stored post is the same;
+        // only the read model returned by the API changes.
         using var client = _factory.CreateClient();
         var create = await client.PostAsJsonAsync("/post", ValidRequest());
         var created = await create.Content.ReadFromJsonAsync<PostResponse>();
@@ -57,6 +67,8 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task Post_returns_bad_request_for_invalid_body()
     {
+        // Invalid input should be treated as an expected client error, not an exception.
+        // The API maps application validation errors to HTTP 400.
         using var client = _factory.CreateClient();
 
         var response = await client.PostAsJsonAsync("/post", new
@@ -73,6 +85,8 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task Post_accepts_xml_and_can_return_xml()
     {
+        // This verifies content negotiation. The same controller action supports XML
+        // because the API contract classes are serializer-friendly DTOs.
         using var client = _factory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Post, "/post");
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/xml"));
@@ -110,6 +124,8 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task Post_with_same_idempotency_key_replays_created_response()
     {
+        // This is the real HTTP version of idempotency. It proves the header is read
+        // from the request, the body hash matches, and the second call replays the first result.
         using var client = _factory.CreateClient();
         var key = Guid.NewGuid().ToString("N");
         var request = ValidRequest($"Idempotent post {key}");
@@ -129,6 +145,8 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task Post_with_same_idempotency_key_and_different_body_returns_conflict()
     {
+        // Same key with a different body is rejected so clients cannot accidentally
+        // reuse an idempotency key for a different operation.
         using var client = _factory.CreateClient();
         var key = Guid.NewGuid().ToString("N");
 
@@ -142,6 +160,8 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task Get_returns_not_found_for_missing_post()
     {
+        // Missing resources are normal API behavior. The application returns NotFound
+        // and the API maps that to HTTP 404.
         using var client = _factory.CreateClient();
 
         var response = await client.GetAsync($"/post/{Guid.NewGuid():D}?includeAuthor=true");
@@ -152,6 +172,9 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task Logs_are_persisted_to_mongodb()
     {
+        // Logging is asynchronous: the request writes to ILogger, the Mongo logger queues it,
+        // and a background worker writes it to MongoDB. The helper below retries briefly
+        // because the log write may happen just after the HTTP response is returned.
         using var client = _factory.CreateClient();
         var title = $"Logged post {Guid.NewGuid():N}";
 
@@ -163,6 +186,8 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
 
     private static async Task<bool> LogExistsAsync(string title)
     {
+        // The test queries MongoDB directly because the public API does not expose logs.
+        // That keeps logging as an infrastructure concern while still verifying it works.
         var mongo = new MongoClient("mongodb://localhost:27017/?directConnection=true");
         var logs = mongo.GetDatabase("visma_blogging_dev").GetCollection<BsonDocument>("logs");
         var filter = Builders<BsonDocument>.Filter.Regex("Message", new BsonRegularExpression(title));
@@ -185,6 +210,8 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
         string key,
         object request)
     {
+        // HttpClient's PostAsJsonAsync does not let us add custom headers inline,
+        // so this helper builds the request manually for idempotency tests.
         using var message = new HttpRequestMessage(HttpMethod.Post, "/post")
         {
             Content = JsonContent.Create(request)
@@ -196,6 +223,8 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
 
     private static object ValidRequest(string title = "First post")
     {
+        // Anonymous objects are enough here because these tests verify HTTP JSON binding,
+        // not the API DTO constructors directly.
         return new
         {
             title,

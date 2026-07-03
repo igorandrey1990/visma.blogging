@@ -8,11 +8,18 @@ using Visma.Blogging.Infrastructure.Persistence;
 
 namespace Visma.Blogging.UnitTests;
 
+/// <summary>
+/// Tests infrastructure adapters against a real local MongoDB container.
+/// These are slower than pure unit tests, but they prove behavior that fake tests cannot:
+/// transactions, duplicate keys, MongoDB query behavior, retry integration, and outbox state changes.
+/// </summary>
 public sealed class InfrastructureTests
 {
     [Fact]
     public async Task Retry_policy_retries_transient_failures()
     {
+        // The retry policy is tested with a deterministic timeout failure instead of
+        // forcing MongoDB to fail. This keeps the test fast while proving retry control flow.
         var attempts = 0;
         var policy = new MongoRetryPolicy(new MongoBlogStoreOptions
         {
@@ -39,12 +46,14 @@ public sealed class InfrastructureTests
     [Fact]
     public async Task Store_saves_post_and_author_snapshot()
     {
+        // This uses the real MongoBlogStore to verify the document can round-trip:
+        // domain object -> Mongo document -> domain/read model.
         await using var fixture = await MongoStoreFixture.CreateAsync();
         var store = fixture.Store;
         var author = Author.Create(new AuthorId(Guid.NewGuid()), "Ada", "Lovelace");
         var post = Post.Create(new PostId(Guid.NewGuid()), author.Id, "Title", "Description", "Content", DateTimeOffset.UtcNow);
 
-        await store.SaveAsync(post, author, CancellationToken.None);
+        await store.SaveAsync(post, author, CreateOutboxMessage(post, author), CancellationToken.None);
         var details = await store.GetByIdAsync(post.Id, includeAuthor: true, CancellationToken.None);
 
         Assert.NotNull(details);
@@ -55,6 +64,8 @@ public sealed class InfrastructureTests
     [Fact]
     public async Task Store_saves_post_and_outbox_message_in_one_transaction()
     {
+        // This is the happy-path transactional outbox test. The post and the outbox
+        // message should both exist after the single MongoDB transaction commits.
         await using var fixture = await MongoStoreFixture.CreateAsync();
         var store = fixture.Store;
         var author = Author.Create(new AuthorId(Guid.NewGuid()), "Ada", "Lovelace");
@@ -70,6 +81,9 @@ public sealed class InfrastructureTests
     [Fact]
     public async Task Store_does_not_add_outbox_message_when_transaction_fails()
     {
+        // This protects the main reason we chose transactional outbox:
+        // if the post insert fails, the outbox insert must not be committed either.
+        // The duplicate post ID forces the transaction to fail.
         await using var fixture = await MongoStoreFixture.CreateAsync();
         var store = fixture.Store;
         var author = Author.Create(new AuthorId(Guid.NewGuid()), "Ada", "Lovelace");
@@ -86,12 +100,14 @@ public sealed class InfrastructureTests
     [Fact]
     public async Task Store_omits_author_when_not_requested()
     {
+        // The persistence adapter supports a read-side option that can omit author details.
+        // This mirrors GET /post/{id} versus GET /post/{id}?includeAuthor=true.
         await using var fixture = await MongoStoreFixture.CreateAsync();
         var store = fixture.Store;
         var author = Author.Create(new AuthorId(Guid.NewGuid()), "Ada", "Lovelace");
         var post = Post.Create(new PostId(Guid.NewGuid()), author.Id, "Title", "Description", "Content", DateTimeOffset.UtcNow);
 
-        await store.SaveAsync(post, author, CancellationToken.None);
+        await store.SaveAsync(post, author, CreateOutboxMessage(post, author), CancellationToken.None);
         var details = await store.GetByIdAsync(post.Id, includeAuthor: false, CancellationToken.None);
 
         Assert.NotNull(details);
@@ -101,26 +117,32 @@ public sealed class InfrastructureTests
     [Fact]
     public async Task Store_rejects_duplicate_post()
     {
+        // MongoDB enforces uniqueness through the document _id.
+        // The adapter translates MongoDB's duplicate-key error into InvalidOperationException,
+        // which the application layer maps to a conflict result.
         await using var fixture = await MongoStoreFixture.CreateAsync();
         var store = fixture.Store;
         var author = Author.Create(new AuthorId(Guid.NewGuid()), "Ada", "Lovelace");
         var post = Post.Create(new PostId(Guid.NewGuid()), author.Id, "Title", "Description", "Content", DateTimeOffset.UtcNow);
 
-        await store.SaveAsync(post, author, CancellationToken.None);
+        await store.SaveAsync(post, author, CreateOutboxMessage(post, author), CancellationToken.None);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => store.SaveAsync(post, author, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.SaveAsync(post, author, CreateOutboxMessage(post, author), CancellationToken.None));
     }
 
     [Fact]
     public async Task Store_is_safe_for_concurrent_writes()
     {
+        // This is a lightweight concurrency smoke test. It verifies the Mongo adapter
+        // can handle many independent writes without shared in-memory state or race bugs.
         await using var fixture = await MongoStoreFixture.CreateAsync();
         var store = fixture.Store;
         var tasks = Enumerable.Range(0, 20).Select(index =>
         {
             var author = Author.Create(new AuthorId(Guid.NewGuid()), $"Name {index}", $"Surname {index}");
             var post = Post.Create(new PostId(Guid.NewGuid()), author.Id, $"Title {index}", "Description", "Content", DateTimeOffset.UtcNow);
-            return store.SaveAsync(post, author, CancellationToken.None);
+            return store.SaveAsync(post, author, CreateOutboxMessage(post, author), CancellationToken.None);
         });
 
         await Task.WhenAll(tasks);
@@ -131,6 +153,8 @@ public sealed class InfrastructureTests
     [Fact]
     public async Task Idempotency_store_replays_completed_response()
     {
+        // Idempotency state is persisted in MongoDB so retries are safe even if the API
+        // process restarts. This test proves a completed key can replay the saved response.
         await using var fixture = await MongoStoreFixture.CreateAsync();
         var key = Guid.NewGuid().ToString("N");
         var hash = "request-hash";
@@ -156,6 +180,8 @@ public sealed class InfrastructureTests
     [Fact]
     public async Task Idempotency_store_rejects_same_key_with_different_hash()
     {
+        // Reusing an idempotency key with a different body is dangerous because the client
+        // might accidentally hide a different operation behind an old key. We reject it.
         await using var fixture = await MongoStoreFixture.CreateAsync();
         var key = Guid.NewGuid().ToString("N");
 
@@ -168,6 +194,9 @@ public sealed class InfrastructureTests
     [Fact]
     public async Task Outbox_store_claims_and_marks_message_as_published()
     {
+        // The background publisher uses this claim/publish state machine.
+        // Claiming prevents two publisher instances from publishing the same message at once,
+        // and MarkPublished records that RabbitMQ accepted the message.
         await using var fixture = await MongoStoreFixture.CreateAsync();
         var message = new OutboxMessage(
             Guid.NewGuid(),
@@ -187,6 +216,8 @@ public sealed class InfrastructureTests
 
     private sealed class MongoStoreFixture : IAsyncDisposable
     {
+        // Each test gets a unique database. That isolates tests from one another while
+        // reusing the same Docker MongoDB instance for speed.
         private const string ConnectionString = "mongodb://localhost:27017/?directConnection=true";
         private readonly IMongoClient _client;
         private readonly string _databaseName;
@@ -213,6 +244,8 @@ public sealed class InfrastructureTests
 
         public static async Task<MongoStoreFixture> CreateAsync()
         {
+            // MongoDB transactions require the Docker MongoDB instance to run as a replica set.
+            // The ping catches missing/stopped MongoDB early with a clear setup failure.
             var databaseName = $"visma_blogging_tests_{Guid.NewGuid():N}";
             var client = new MongoClient(ConnectionString);
             await client.GetDatabase("admin")
@@ -221,6 +254,8 @@ public sealed class InfrastructureTests
 
             var options = new MongoBlogStoreOptions
             {
+                // Collection names are explicit so tests can count documents directly.
+                // This mirrors production configuration without sharing production data.
                 ConnectionString = ConnectionString,
                 DatabaseName = databaseName,
                 PostsCollectionName = "posts",
@@ -258,12 +293,15 @@ public sealed class InfrastructureTests
 
         public async ValueTask DisposeAsync()
         {
+            // Dropping the unique database keeps the local MongoDB container tidy after tests.
             await _client.DropDatabaseAsync(_databaseName).ConfigureAwait(false);
         }
     }
 
     private static OutboxMessage CreateOutboxMessage(Post post, Author author)
     {
+        // Test outbox messages use the same factory as production so the persisted
+        // contract shape remains covered by tests.
         return OutboxMessageFactory.PostCreated(
             new PostCreatedIntegrationEvent(post.Id.Value, author.Id.Value, post.Title, post.CreatedAt),
             DateTimeOffset.UtcNow);

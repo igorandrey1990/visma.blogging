@@ -8,9 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- coverlet.collector enables XPlat Code Coverage reporting from dotnet test. -->
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <!-- Microsoft.NET.Test.Sdk is the test runner bridge used by dotnet test. -->
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <!-- MongoDB.Driver is referenced because infrastructure adapter tests use a real MongoDB container. -->
     <PackageReference Include="MongoDB.Driver" Version="3.9.0" />
+    <!-- xUnit is the test framework; the runner package integrates it with dotnet test and IDEs. -->
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
@@ -20,6 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Unit tests reference the inner projects directly and avoid referencing the API project. -->
     <ProjectReference Include="..\..\src\Visma.Blogging.Domain\Visma.Blogging.Domain.csproj" />
     <ProjectReference Include="..\..\src\Visma.Blogging.Application\Visma.Blogging.Application.csproj" />
     <ProjectReference Include="..\..\src\Visma.Blogging.Infrastructure\Visma.Blogging.Infrastructure.csproj" />
