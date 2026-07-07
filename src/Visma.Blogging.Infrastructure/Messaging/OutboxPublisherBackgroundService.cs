@@ -44,6 +44,7 @@ public sealed class OutboxPublisherBackgroundService : BackgroundService
         {
             try
             {
+                // Claiming locks records for this worker so multiple API instances can publish safely.
                 var messages = await _outbox.ClaimPendingAsync(
                         Math.Max(1, _options.PublisherBatchSize),
                         lockDuration,
@@ -73,12 +74,14 @@ public sealed class OutboxPublisherBackgroundService : BackgroundService
         try
         {
             await _publisher.PublishAsync(record.ToMessage(), cancellationToken).ConfigureAwait(false);
+            // Marking the record after RabbitMQ accepts it keeps publication at-least-once.
             await _outbox.MarkPublishedAsync(record.Id, cancellationToken).ConfigureAwait(false);
 
             _logger.LogInformation("Published outbox message {MessageId} of type {MessageType}.", record.Id, record.Type);
         }
         catch (Exception exception)
         {
+            // Failed records are not discarded; they are scheduled for another attempt by the outbox store.
             await _outbox.MarkFailedAsync(record.Id, exception.Message, cancellationToken).ConfigureAwait(false);
             _logger.LogWarning(
                 exception,

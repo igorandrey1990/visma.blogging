@@ -16,6 +16,8 @@ The API lets clients create and read blog posts. A post is created together with
 - Publish post-created integration events to RabbitMQ through a transactional outbox.
 - Apply retry handling around transient MongoDB failures.
 - Use global exception handling for consistent API error responses.
+- Expose health checks, Swagger UI, versioned routes, rate limiting, and OpenTelemetry.
+- Create MongoDB indexes and TTL retention for logs, idempotency, and published outbox records.
 
 ## Technology Stack
 
@@ -24,6 +26,8 @@ The API lets clients create and read blog posts. A post is created together with
 - MongoDB
 - RabbitMQ
 - Docker Compose
+- Swagger / OpenAPI
+- OpenTelemetry
 - xUnit
 - Coverlet
 
@@ -48,7 +52,7 @@ The API project depends on the application layer and wires the system together. 
 Post creation uses a transactional outbox. The post and the outgoing `post.created.v1` message are committed in the same MongoDB transaction. A background worker later publishes the outbox message to RabbitMQ and marks it as published.
 
 ```text
-POST /post
+POST /api/v1/post
   -> PostsController
   -> CreatePostEndpointService
   -> CreatePostHandler
@@ -85,6 +89,9 @@ docker compose up -d --build
 The Docker stack starts:
 
 - API: `http://localhost:8080`
+- Swagger UI: `http://localhost:8080/swagger`
+- Health live: `http://localhost:8080/health/live`
+- Health ready: `http://localhost:8080/health/ready`
 - MongoDB: `localhost:27017`
 - RabbitMQ Management UI: `http://localhost:15672`
 - RabbitMQ credentials: `guest / guest`
@@ -120,7 +127,7 @@ $body = @{
 
 $created = Invoke-RestMethod `
   -Method Post `
-  -Uri http://localhost:8080/post `
+  -Uri http://localhost:8080/api/v1/post `
   -ContentType "application/json" `
   -Headers @{ "Idempotency-Key" = [guid]::NewGuid().ToString("N") } `
   -Body $body
@@ -131,13 +138,13 @@ $created
 ### Get A Post
 
 ```powershell
-Invoke-RestMethod "http://localhost:8080/post/$($created.id)"
+Invoke-RestMethod "http://localhost:8080/api/v1/post/$($created.id)"
 ```
 
 ### Get A Post With Author
 
 ```powershell
-Invoke-RestMethod "http://localhost:8080/post/$($created.id)?includeAuthor=true"
+Invoke-RestMethod "http://localhost:8080/api/v1/post/$($created.id)?includeAuthor=true"
 ```
 
 ### Request XML
@@ -145,9 +152,11 @@ Invoke-RestMethod "http://localhost:8080/post/$($created.id)?includeAuthor=true"
 ```powershell
 Invoke-RestMethod `
   -Method Get `
-  -Uri "http://localhost:8080/post/$($created.id)?includeAuthor=true" `
+  -Uri "http://localhost:8080/api/v1/post/$($created.id)?includeAuthor=true" `
   -Headers @{ Accept = "application/xml" }
 ```
+
+The original challenge routes (`/post` and `/post/{id}`) are still supported for compatibility. The canonical documented routes are under `/api/v1`.
 
 ## Configuration
 
@@ -155,6 +164,7 @@ The main configuration sections are:
 
 - `Mongo`: connection string, database name, collection names, retry settings.
 - `RabbitMq`: host, credentials, exchange, queue, routing key, publisher settings.
+- `OpenTelemetry`: service name and optional OTLP endpoint.
 
 Docker Compose provides production-like local values through environment variables. Local development defaults are also available in `src/Visma.Blogging.Api/appsettings.Development.json`.
 
@@ -173,7 +183,7 @@ Run coverage:
 dotnet test Visma.Blogging.slnx --collect:"XPlat Code Coverage"
 ```
 
-The test suite covers domain rules, application handlers, controller behavior, JSON/XML content negotiation, MongoDB persistence, transactional outbox behavior, idempotency, global exception handling, and MongoDB-backed logging.
+The test suite covers domain rules, application handlers, controller behavior, JSON/XML content negotiation, versioned routes, health checks, Swagger, rate limiting, MongoDB persistence, TTL/index creation, transactional outbox behavior, idempotency, global exception handling, and MongoDB-backed logging.
 
 ## Local Operations
 

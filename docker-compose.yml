@@ -50,6 +50,9 @@ services:
       Mongo__OutboxCollectionName: outbox
       Mongo__RetryMaxAttempts: 3
       Mongo__RetryBaseDelayMilliseconds: 100
+      Mongo__LogsRetentionDays: 7
+      Mongo__IdempotencyRetentionHours: 24
+      Mongo__PublishedOutboxRetentionDays: 7
       RabbitMq__Enabled: true
       RabbitMq__HostName: rabbitmq
       RabbitMq__Port: 5672
@@ -63,6 +66,8 @@ services:
       RabbitMq__PublisherBatchSize: 25
       RabbitMq__PublisherPollingIntervalMilliseconds: 1000
       RabbitMq__OutboxLockSeconds: 30
+      OpenTelemetry__ServiceName: visma-blogging-api
+      OpenTelemetry__Otlp__Endpoint: ""
     ports:
       - "8080:8080"
 

@@ -45,6 +45,8 @@ public sealed class MongoOutboxStore : IOutboxReader
         CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
+        // A message is available when it is pending/failed, its retry delay has passed,
+        // and no other worker currently holds its lock.
         var available = Builders<MongoOutboxDocument>.Filter.And(
             Builders<MongoOutboxDocument>.Filter.In(document => document.Status, [MongoOutboxDocument.PendingStatus, MongoOutboxDocument.FailedStatus]),
             Builders<MongoOutboxDocument>.Filter.Lte(document => document.NextAttemptAtUtc, now),
@@ -63,6 +65,7 @@ public sealed class MongoOutboxStore : IOutboxReader
         var claimed = new List<OutboxMessageRecord>();
         foreach (var candidate in candidates)
         {
+            // The filter is repeated during update to avoid races between multiple publisher workers.
             var claimFilter = Builders<MongoOutboxDocument>.Filter.And(
                 Builders<MongoOutboxDocument>.Filter.Eq(document => document.Id, candidate.Id),
                 available);
@@ -109,6 +112,7 @@ public sealed class MongoOutboxStore : IOutboxReader
             .ConfigureAwait(false);
 
         var attempts = existing?.AttemptCount + 1 ?? 1;
+        // Exponential backoff prevents a failing broker or bad message from being hammered continuously.
         var delaySeconds = Math.Min(60, Math.Pow(2, attempts));
         var update = Builders<MongoOutboxDocument>.Update
             .Set(document => document.Status, MongoOutboxDocument.FailedStatus)

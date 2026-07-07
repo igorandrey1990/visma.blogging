@@ -44,6 +44,7 @@ public sealed class CreatePostEndpointService
         idempotencyKey = idempotencyKey.Trim();
         if (idempotencyKey.Length > MaxIdempotencyKeyLength)
         {
+            // Bound the header size before storing it so clients cannot create oversized idempotency records.
             return CreatePostEndpointResult.InvalidIdempotencyKey();
         }
 
@@ -64,6 +65,7 @@ public sealed class CreatePostEndpointService
         string idempotencyKey,
         CancellationToken cancellationToken)
     {
+        // The hash binds an idempotency key to one exact request body. Reusing the key with different content is a conflict.
         var requestHash = IdempotencyRequestHasher.Hash(request);
         var idempotency = await _idempotencyStore.TryStartAsync(idempotencyKey, requestHash, cancellationToken)
             .ConfigureAwait(false);
@@ -98,6 +100,7 @@ public sealed class CreatePostEndpointService
         }
         catch
         {
+            // If the use case throws, remove the in-progress marker so a later retry can start cleanly.
             await _idempotencyStore.RemoveAsync(idempotencyKey, requestHash, CancellationToken.None)
                 .ConfigureAwait(false);
             throw;
@@ -105,6 +108,7 @@ public sealed class CreatePostEndpointService
 
         if (!result.IsSuccess)
         {
+            // Validation/domain failures are not cached as successful idempotent results.
             await _idempotencyStore.RemoveAsync(idempotencyKey, requestHash, cancellationToken).ConfigureAwait(false);
             return CreatePostEndpointResult.ApplicationFailure(result.Error!);
         }
@@ -151,6 +155,6 @@ public sealed class CreatePostEndpointService
 
     private static string CreateLocation(PostResponse response)
     {
-        return $"/post/{response.Id:D}";
+        return $"/api/v1/post/{response.Id:D}";
     }
 }

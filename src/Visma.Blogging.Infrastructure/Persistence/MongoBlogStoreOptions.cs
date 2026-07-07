@@ -49,4 +49,19 @@ public sealed class MongoBlogStoreOptions
     /// Base delay in milliseconds between transient MongoDB retry attempts.
     /// </summary>
     public int RetryBaseDelayMilliseconds { get; set; } = 100;
+
+    /// <summary>
+    /// Number of days to keep structured API logs.
+    /// </summary>
+    public int LogsRetentionDays { get; set; } = 7;
+
+    /// <summary>
+    /// Number of hours to keep create-post idempotency records.
+    /// </summary>
+    public int IdempotencyRetentionHours { get; set; } = 24;
+
+    /// <summary>
+    /// Number of days to keep published outbox messages.
+    /// </summary>
+    public int PublishedOutboxRetentionDays { get; set; } = 7;
 }

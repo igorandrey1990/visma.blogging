@@ -51,6 +51,8 @@ public sealed class MongoBlogStore : IPostCreationStore, IPostQueryStore
                     async token =>
                     {
                         using var session = await _client.StartSessionAsync(cancellationToken: token).ConfigureAwait(false);
+                        // The post and outbox message are committed together. If either insert fails,
+                        // neither side effect is persisted, preventing a post without an integration event.
                         await session.WithTransactionAsync(
                                 async (sessionHandle, transactionToken) =>
                                 {
@@ -90,6 +92,7 @@ public sealed class MongoBlogStore : IPostCreationStore, IPostQueryStore
         }
 
         var post = document.ToPost();
+        // Author details are stored with the post but only materialized when the read model asks for them.
         var author = includeAuthor ? document.Author.ToAuthor() : null;
 
         return new PostDetails(post, author);

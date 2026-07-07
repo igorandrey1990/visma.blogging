@@ -48,6 +48,29 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     [Fact]
+    public async Task Versioned_post_routes_create_and_get_post()
+    {
+        // The original challenge routes are still supported, but /api/v1 is now the
+        // canonical documented API route. This proves API versioning did not break
+        // the create/read workflow.
+        using var client = _factory.CreateClient();
+
+        var create = await client.PostAsJsonAsync("/api/v1/post", ValidRequest("Versioned post"));
+        var created = await create.Content.ReadFromJsonAsync<PostResponse>();
+
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        Assert.NotNull(created);
+        Assert.Equal($"/api/v1/post/{created!.Id:D}", create.Headers.Location!.OriginalString);
+
+        var get = await client.GetAsync($"/api/v1/post/{created.Id:D}?includeAuthor=true");
+        var fetched = await get.Content.ReadFromJsonAsync<PostResponse>();
+
+        Assert.Equal(HttpStatusCode.OK, get.StatusCode);
+        Assert.Equal(created.Id, fetched!.Id);
+        Assert.NotNull(fetched.Author);
+    }
+
+    [Fact]
     public async Task Get_returns_author_when_requested()
     {
         // includeAuthor=true is a query-side option. The stored post is the same;
@@ -119,6 +142,55 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
         Assert.Equal(HttpStatusCode.OK, get.StatusCode);
         Assert.Equal("XML post", getXml.Root!.Element("Title")!.Value);
         Assert.Equal("Ada", getXml.Root.Element("Author")!.Element("Name")!.Value);
+    }
+
+    [Fact]
+    public async Task Health_endpoints_report_liveness_and_readiness()
+    {
+        // /health/live is intentionally shallow: it proves the API process can respond.
+        // /health/ready checks external dependencies through Infrastructure health checks.
+        using var client = _factory.CreateClient();
+
+        var live = await client.GetAsync("/health/live");
+        var ready = await client.GetAsync("/health/ready");
+
+        Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+    }
+
+    [Fact]
+    public async Task Swagger_document_exposes_versioned_routes()
+    {
+        // Swagger documents the canonical versioned API, while legacy /post routes remain
+        // available for backward compatibility and are intentionally hidden from OpenAPI.
+        using var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/swagger/v1/swagger.json");
+        var swagger = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("/api/v1/post", swagger);
+        Assert.Contains("Idempotency-Key", swagger);
+    }
+
+    [Fact]
+    public async Task Post_rate_limit_returns_too_many_requests_after_policy_limit()
+    {
+        // Use a separate factory so this test has an isolated in-memory rate limiter.
+        // The configured write policy allows 20 POST requests per minute per client.
+        using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
+        HttpResponseMessage? response = null;
+
+        for (var requestNumber = 0; requestNumber < 21; requestNumber++)
+        {
+            response = await client.PostAsJsonAsync(
+                "/api/v1/post",
+                ValidRequest($"Rate limited post {Guid.NewGuid():N}"));
+        }
+
+        Assert.NotNull(response);
+        Assert.Equal((HttpStatusCode)429, response!.StatusCode);
     }
 
     [Fact]

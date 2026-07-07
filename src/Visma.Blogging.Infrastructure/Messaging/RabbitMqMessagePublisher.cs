@@ -39,6 +39,7 @@ public sealed class RabbitMqMessagePublisher : IRabbitMqMessagePublisher
         await DeclareTopologyAsync(channel, cancellationToken).ConfigureAwait(false);
 
         var body = Encoding.UTF8.GetBytes(message.PayloadJson);
+        // Persistent delivery keeps messages durable on the broker when the queue is durable.
         var properties = new BasicProperties
         {
             AppId = "visma-blogging-api",
@@ -65,6 +66,7 @@ public sealed class RabbitMqMessagePublisher : IRabbitMqMessagePublisher
 
     private async Task DeclareTopologyAsync(IChannel channel, CancellationToken cancellationToken)
     {
+        // The publisher declares topology idempotently so a fresh local/docker environment works without manual setup.
         await channel.ExchangeDeclareAsync(
                 _options.ExchangeName,
                 ExchangeType.Direct,
@@ -88,6 +90,7 @@ public sealed class RabbitMqMessagePublisher : IRabbitMqMessagePublisher
                 autoDelete: false,
                 arguments: new Dictionary<string, object?>
                 {
+                    // Unprocessable consumer messages can be routed away from the main queue instead of looping forever.
                     ["x-dead-letter-exchange"] = _options.DeadLetterExchangeName
                 },
                 cancellationToken: cancellationToken)

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Visma.Blogging.Application.Blogging;
@@ -214,6 +215,22 @@ public sealed class InfrastructureTests
         Assert.Equal(1, await fixture.CountOutboxAsync("published"));
     }
 
+    [Fact]
+    public async Task Mongo_index_initializer_creates_operational_and_ttl_indexes()
+    {
+        // Production systems need indexes for background worker queries and retention.
+        // This verifies the Infrastructure startup initializer creates those MongoDB indexes.
+        await using var fixture = await MongoStoreFixture.CreateAsync();
+
+        await fixture.CreateIndexesAsync();
+
+        Assert.True(await fixture.IndexExistsAsync("logs", "logs_timestamp_ttl"));
+        Assert.True(await fixture.IndexExistsAsync("logs", "logs_trace_id"));
+        Assert.True(await fixture.IndexExistsAsync("idempotency", "idempotency_created_at_ttl"));
+        Assert.True(await fixture.IndexExistsAsync("outbox", "outbox_publishable"));
+        Assert.True(await fixture.IndexExistsAsync("outbox", "outbox_published_at_ttl"));
+    }
+
     private sealed class MongoStoreFixture : IAsyncDisposable
     {
         // Each test gets a unique database. That isolates tests from one another while
@@ -227,13 +244,17 @@ public sealed class InfrastructureTests
             string databaseName,
             MongoBlogStore store,
             MongoCreatePostIdempotencyStore idempotencyStore,
-            MongoOutboxStore outboxStore)
+            MongoOutboxStore outboxStore,
+            MongoBlogStoreOptions options,
+            MongoRetryPolicy retryPolicy)
         {
             _client = client;
             _databaseName = databaseName;
             Store = store;
             IdempotencyStore = idempotencyStore;
             OutboxStore = outboxStore;
+            Options = options;
+            RetryPolicy = retryPolicy;
         }
 
         public MongoBlogStore Store { get; }
@@ -241,6 +262,10 @@ public sealed class InfrastructureTests
         public MongoCreatePostIdempotencyStore IdempotencyStore { get; }
 
         public MongoOutboxStore OutboxStore { get; }
+
+        public MongoBlogStoreOptions Options { get; }
+
+        public MongoRetryPolicy RetryPolicy { get; }
 
         public static async Task<MongoStoreFixture> CreateAsync()
         {
@@ -259,9 +284,13 @@ public sealed class InfrastructureTests
                 ConnectionString = ConnectionString,
                 DatabaseName = databaseName,
                 PostsCollectionName = "posts",
+                LogsCollectionName = "logs",
                 IdempotencyCollectionName = "idempotency",
                 OutboxCollectionName = "outbox",
-                RetryBaseDelayMilliseconds = 1
+                RetryBaseDelayMilliseconds = 1,
+                LogsRetentionDays = 7,
+                IdempotencyRetentionHours = 24,
+                PublishedOutboxRetentionDays = 7
             };
             var retryPolicy = new MongoRetryPolicy(options);
 
@@ -270,7 +299,9 @@ public sealed class InfrastructureTests
                 databaseName,
                 new MongoBlogStore(client, options, retryPolicy),
                 new MongoCreatePostIdempotencyStore(client, options, retryPolicy),
-                new MongoOutboxStore(client, options, retryPolicy));
+                new MongoOutboxStore(client, options, retryPolicy),
+                options,
+                retryPolicy);
         }
 
         public async Task<long> CountPostsAsync()
@@ -289,6 +320,29 @@ public sealed class InfrastructureTests
                 .GetCollection<object>("outbox")
                 .CountDocumentsAsync(filter)
                 .ConfigureAwait(false);
+        }
+
+        public async Task CreateIndexesAsync()
+        {
+            var initializer = new MongoIndexInitializer(
+                _client,
+                Options,
+                RetryPolicy,
+                NullLogger<MongoIndexInitializer>.Instance);
+
+            await initializer.StartAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        public async Task<bool> IndexExistsAsync(string collectionName, string indexName)
+        {
+            var indexes = await _client.GetDatabase(_databaseName)
+                .GetCollection<BsonDocument>(collectionName)
+                .Indexes
+                .ListAsync()
+                .ConfigureAwait(false);
+            var documents = await indexes.ToListAsync().ConfigureAwait(false);
+
+            return documents.Any(index => index.TryGetValue("name", out var name) && name == indexName);
         }
 
         public async ValueTask DisposeAsync()
