@@ -157,6 +157,22 @@ public sealed class PostEndpointsTests : IClassFixture<WebApplicationFactory<Pro
         Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
     }
 
+    [Theory]
+    [InlineData("maybe")]
+    [InlineData("1")]
+    [InlineData("yes")]
+    public async Task Get_returns_bad_request_for_invalid_include_author(string includeAuthor)
+    {
+        // includeAuthor binds to a bool. A value that is neither "true" nor "false"
+        // fails model binding, and [ApiController] maps that to HTTP 400 before the
+        // handler ever runs, so the post does not need to exist.
+        using var client = _factory.CreateClient();
+
+        var response = await client.GetAsync($"/post/{Guid.NewGuid():D}?includeAuthor={includeAuthor}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     [Fact]
     public async Task Get_returns_not_found_for_missing_post()
     {
